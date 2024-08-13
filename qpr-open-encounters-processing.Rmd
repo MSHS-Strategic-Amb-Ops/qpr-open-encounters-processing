@@ -1,0 +1,141 @@
+---
+title: "qpr-open-encounters-processing"
+author: "Riya"
+date: "2024-08-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(glue)
+library(odbc)
+library(tidyverse)
+library(DBI)
+library(pool)
+
+
+## creating qpr open encounters processed table using V_ENTERPRISE_MISSING_CHARGE_OPEN_ENCOUNTER
+
+qpr_open_enc_drop <- glue("DROP TABLE PROD_QPR_OPEN_ENCOUNTER")
+qpr_open_enc_query <- glue("CREATE TABLE PROD_QPR_OPEN_ENCOUNTER AS
+                             SELECT k.*,
+                             CASE WHEN k.DEPT_MANAGED_PROV_MAP IS NOT NULL THEN k.DEPT_MANAGED_PROV_MAP
+                                  WHEN k.DEPT_MANAGED_PROV_MAP IS NULL AND k.DEPT_MANAGED_DEPT_MAP IS NOT NULL THEN k.DEPT_MANAGED_DEPT_MAP
+                                  ELSE k.DEPT_MANAGED_DEPT_MAP 
+                             END AS DEPT_MANAGED_FINAL,
+                             CASE WHEN k.SITE_PROV_MAP IS NOT NULL THEN k.SITE_PROV_MAP
+                                  WHEN k.SITE_PROV_MAP IS NULL AND k.SITE_DEPT_MAP IS NOT NULL THEN k.SITE_DEPT_MAP
+                                  WHEN k.SITE_PROV_MAP IS NULL AND k.SITE_DEPT_MAP IS NULL THEN k.CAMPUS_DEPT_MAP
+                                  ELSE k.CAMPUS_DEPT_MAP
+                             END AS SITE_FINAL,
+                             CASE WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NOT NULL THEN k.OFFICE_PROCEDURE_APPT_MAP
+                                  WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NULL AND k.OFFICE_PROCEDURE_PROV_MAP IS NOT NULL THEN k.OFFICE_PROCEDURE_PROV_MAP
+                                  WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NULL AND k.OFFICE_PROCEDURE_PROV_MAP IS NULL AND k.OFFICE_PROCEDURE_DEPT_MAP IS NOT NULL 
+                                  THEN k.OFFICE_PROCEDURE_DEPT_MAP
+                             ELSE k.OFFICE_PROCEDURE_DEPT_MAP
+                             END AS OFFICE_PROCEDURE_FINAL
+                             FROM
+                             (SELECT g.*, h.OFFICE_PROCEDURE_APPT_MAP
+                             FROM
+                             (SELECT s.*, f.DEPT_MANAGED_PROV_MAP, f.SITE_PROV_MAP, f.OFFICE_PROCEDURE_PROV_MAP
+                             FROM
+                             (SELECT e.*, r.NPI
+                             FROM
+                             (SELECT c.*, d.CAMPUS AS CAMPUS_DEPT_MAP, d.CAMPUS_SPECIALTY AS CAMPUS_SPECIALTY_DEPT_MAP, d.CLINICAL_DEPT_DEPT_MAP,
+                             d.CLINICAL_SUB_DEPT_DEPT_MAP, d.DEPT_MANAGED_DEPT_MAP, d.OFFICE_PROCEDURE_DEPT_MAP,
+                             d.SITE_DEPT_MAP
+                             FROM
+                             (SELECT * FROM V_ENTERPRISE_MISSING_CHARGE_OPEN_ENCOUNTER
+                             WHERE EXTRACT(YEAR FROM DATE_OF_SERVICE)>= 2021) c
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING) d
+                             ON c.DEPARTMENT_ID = d.DEPARTMENT_ID) e
+                             LEFT JOIN 
+                             (SELECT * FROM CLARITY_SER_2) r
+                             ON e.APPT_PROV_ID = r.PROV_ID) s
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING_PROV) f
+                             ON s.DEPARTMENT_ID = f.DEPARTMENT_ID AND s.NPI = f.NPI) g
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING_APPT) h
+                             ON g.CLINICAL_DEPT_DEPT_MAP = h.CAMPUS_SPECIALTY_APPT_MAP AND g.PRC_NAME = h.PRC_NAME) k
+                             ")
+
+qpr_open_enc_index <- glue("CREATE index qpr_open_enc_index on PROD_QPR_OPEN_ENCOUNTER (DEPARTMENT_ID, CAMPUS_DEPT_MAP)")
+
+
+## creating qpr open encounters processed table using V_MSPT_MISSING_CHARGE_LEAGUE
+
+qpr_open_enc_pb_drop <- glue("DROP TABLE PROD_QPR_OPEN_ENCOUNTER_PB")
+qpr_open_enc_pb_query <- glue("CREATE TABLE PROD_QPR_OPEN_ENCOUNTER_PB AS
+                             SELECT k.*,
+                             CASE WHEN k.DEPT_MANAGED_PROV_MAP IS NOT NULL THEN k.DEPT_MANAGED_PROV_MAP
+                                  WHEN k.DEPT_MANAGED_PROV_MAP IS NULL AND k.DEPT_MANAGED_DEPT_MAP IS NOT NULL THEN k.DEPT_MANAGED_DEPT_MAP
+                                  ELSE k.DEPT_MANAGED_DEPT_MAP 
+                             END AS DEPT_MANAGED_FINAL,
+                             CASE WHEN k.SITE_PROV_MAP IS NOT NULL THEN k.SITE_PROV_MAP
+                                  WHEN k.SITE_PROV_MAP IS NULL AND k.SITE_DEPT_MAP IS NOT NULL THEN k.SITE_DEPT_MAP
+                                  WHEN k.SITE_PROV_MAP IS NULL AND k.SITE_DEPT_MAP IS NULL THEN k.CAMPUS_DEPT_MAP
+                                  ELSE k.CAMPUS_DEPT_MAP
+                             END AS SITE_FINAL,
+                             CASE WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NOT NULL THEN k.OFFICE_PROCEDURE_APPT_MAP
+                                  WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NULL AND k.OFFICE_PROCEDURE_PROV_MAP IS NOT NULL THEN k.OFFICE_PROCEDURE_PROV_MAP
+                                  WHEN k.OFFICE_PROCEDURE_APPT_MAP IS NULL AND k.OFFICE_PROCEDURE_PROV_MAP IS NULL AND k.OFFICE_PROCEDURE_DEPT_MAP IS NOT NULL 
+                                  THEN k.OFFICE_PROCEDURE_DEPT_MAP
+                             ELSE k.OFFICE_PROCEDURE_DEPT_MAP
+                             END AS OFFICE_PROCEDURE_FINAL
+                             FROM
+                             (SELECT g.*, h.OFFICE_PROCEDURE_APPT_MAP
+                             FROM
+                             (SELECT s.*, f.DEPT_MANAGED_PROV_MAP, f.SITE_PROV_MAP, f.OFFICE_PROCEDURE_PROV_MAP
+                             FROM
+                             (SELECT e.*, r.NPI
+                             FROM
+                             (SELECT c.*, d.CAMPUS AS CAMPUS_DEPT_MAP, d.CAMPUS_SPECIALTY AS CAMPUS_SPECIALTY_DEPT_MAP, d.CLINICAL_DEPT_DEPT_MAP,
+                             d.CLINICAL_SUB_DEPT_DEPT_MAP, d.DEPT_MANAGED_DEPT_MAP, d.OFFICE_PROCEDURE_DEPT_MAP,
+                             d.SITE_DEPT_MAP
+                             FROM
+                             (SELECT * FROM V_MSPT_MISSING_CHARGE_LEAGUE
+                             WHERE EXTRACT(YEAR FROM DATE_OF_SERVICE)>= 2021) c
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING) d
+                             ON c.DEPARTMENT_ID = d.DEPARTMENT_ID) e
+                             LEFT JOIN 
+                             (SELECT * FROM CLARITY_SER_2) r
+                             ON e.APPT_PROV_ID = r.PROV_ID) s
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING_PROV) f
+                             ON s.DEPARTMENT_ID = f.DEPARTMENT_ID AND s.NPI = f.NPI) g
+                             LEFT JOIN
+                             (SELECT * FROM MASTER_AMB_MAPPING_APPT) h
+                             ON g.CLINICAL_DEPT_DEPT_MAP = h.CAMPUS_SPECIALTY_APPT_MAP AND g.PRC_NAME = h.PRC_NAME) k
+                             ")
+
+qpr_open_enc_pb_index <- glue("CREATE index qpr_open_enc_pb_index on PROD_QPR_OPEN_ENCOUNTER_PB (DEPARTMENT_ID, CAMPUS_DEPT_MAP)")
+
+## Grouped Table execution
+tryCatch({
+  conn1 <- dbConnect(drv = odbc(), "OAO Cloud DB SoYoun", timeout = 30)
+  dbBegin(conn1)
+  if(dbExistsTable(conn1, "PROD_QPR_OPEN_ENCOUNTER")){
+  dbExecute(conn1, qpr_open_enc_drop) 
+  }
+  dbExecute(conn1, qpr_open_enc_query) 
+  dbExecute(conn1, qpr_open_enc_index)
+  if(dbExistsTable(conn1, "PROD_QPR_OPEN_ENCOUNTER_PB")){
+  dbExecute(conn1, qpr_open_enc_pb_drop) 
+  }
+  dbExecute(conn1, qpr_open_enc_pb_query) 
+  dbExecute(conn1, qpr_open_enc_pb_index)
+  
+  dbCommit(conn1)
+  dbDisconnect(conn1)
+  print("success")
+  
+},
+error = function(err){
+  print(paste("Error staging:", err$message))
+  dbRollback(conn1)
+  dbDisconnect(conn1)
+})
+
